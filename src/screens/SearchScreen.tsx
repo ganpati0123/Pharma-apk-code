@@ -1,307 +1,229 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
-  StyleSheet,
   View,
   Text,
-  Pressable,
-  Platform,
-  Modal,
+  StyleSheet,
+  TextInput,
+  FlatList,
+  Image,
+  TouchableOpacity,
+  Dimensions,
   ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSettingsStore } from '../store/settingsStore';
-import { usePermissions } from '../hooks/usePermissions';
-import { useSearch } from '../hooks/useSearch';
-import { useAI } from '../hooks/useAI';
-import SearchBar from '../components/SearchBar';
-import FilterChips from '../components/FilterChips';
-import MediaGrid from '../components/MediaGrid';
-import FullscreenViewer from '../components/FullscreenViewer';
-import PermissionRequest from '../components/PermissionRequest';
+import { useMediaStore } from '../store/mediaStore';
+import { useSearchStore } from '../store/searchStore';
+import { CATEGORY_ICONS, CATEGORY_COLORS, AI_CATEGORIES } from '../constants/categories';
 import type { MediaItem } from '../types';
 
-const MEDIA_TYPE_FILTERS = [
-  { id: 'all', label: 'All' },
-  { id: 'photo', label: 'Photos' },
-  { id: 'video', label: 'Videos' },
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+const QUICK_FILTERS = [
+  { label: 'Photos', icon: 'camera', type: 'photo' },
+  { label: 'Videos', icon: 'videocam', type: 'video' },
+  { label: 'Favorites', icon: 'heart', type: 'favorites' },
+  { label: 'Recent', icon: 'time', type: 'recent' },
 ];
 
-const SearchScreen: React.FC = () => {
-  const colors = useSettingsStore((s) => s.colors);
-  const { hasPermission, requestPermission } = usePermissions();
-  const {
-    query,
-    results,
-    recentSearches,
-    isSearching,
-    handleSearch,
-    handleSubmitSearch,
-    setFilters,
-    clearSearch,
-  } = useSearch();
+export const SearchScreen: React.FC<{
+  onImagePress?: (item: MediaItem, index: number) => void;
+}> = ({ onImagePress }) => {
+  const { colors, gridColumns } = useSettingsStore();
+  const { assets } = useMediaStore();
+  const { query, setQuery, searchResults, isSearching, recentSearches, addRecentSearch, clearRecentSearches } = useSearchStore();
+  const [activeFilter, setActiveFilter] = useState<string | null>(null);
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
 
-  const { suggestedTags } = useAI();
-  const [selectedMediaType, setSelectedMediaType] = useState('all');
-  const [viewerVisible, setViewerVisible] = useState(false);
-  const [viewerIndex, setViewerIndex] = useState(0);
+  const gap = 2;
+  const itemSize = (SCREEN_WIDTH - gap * (gridColumns + 1)) / gridColumns;
 
-  const handleMediaTypeFilter = useCallback(
-    (typeId: string) => {
-      setSelectedMediaType(typeId);
-      setFilters({ mediaType: typeId as 'photo' | 'video' | 'all' });
-    },
-    [setFilters]
-  );
+  const categories = useMemo(() => {
+    const counts = new Map<string, number>();
+    assets.forEach((asset) => {
+      const cat = asset.aiCategory || 'OTHER';
+      counts.set(cat, (counts.get(cat) || 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [assets]);
 
-  const handleTagPress = useCallback(
-    (tag: string) => {
-      handleSearch(tag);
-    },
-    [handleSearch]
-  );
+  const filteredResults = useMemo(() => {
+    let results = query.length > 0 ? searchResults : assets;
 
-  const handleItemPress = useCallback((_item: MediaItem, index: number) => {
-    setViewerIndex(index);
-    setViewerVisible(true);
-  }, []);
+    if (activeFilter === 'photo') {
+      results = results.filter((i) => i.mediaType === 'photo');
+    } else if (activeFilter === 'video') {
+      results = results.filter((i) => i.mediaType === 'video');
+    } else if (activeFilter === 'favorites') {
+      results = results.filter((i) => i.isFavorite);
+    } else if (activeFilter === 'recent') {
+      const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      results = results.filter((i) => i.creationTime > weekAgo);
+    }
 
-  if (hasPermission === null) {
-    return <View style={[styles.container, { backgroundColor: colors.background }]} />;
-  }
+    if (activeCategory) {
+      results = results.filter((i) => i.aiCategory === activeCategory);
+    }
 
-  if (hasPermission === false) {
-    return <PermissionRequest onRequest={requestPermission} />;
-  }
+    return results;
+  }, [query, searchResults, assets, activeFilter, activeCategory]);
 
-  const showResults = query.trim().length > 0;
+  const handleSearch = useCallback((text: string) => {
+    setQuery(text);
+    if (text.length > 2) {
+      addRecentSearch(text);
+    }
+  }, [setQuery, addRecentSearch]);
+
+  const renderItem = useCallback(({ item, index }: { item: MediaItem; index: number }) => (
+    <TouchableOpacity
+      onPress={() => onImagePress?.(item, index)}
+      style={{ width: itemSize, height: itemSize, margin: gap / 2 }}
+      activeOpacity={0.8}
+    >
+      <Image source={{ uri: item.uri }} style={styles.gridImage} resizeMode="cover" />
+      {item.aiCategory && (
+        <View style={styles.badge}>
+          <Text style={styles.badgeText}>{item.aiCategory}</Text>
+        </View>
+      )}
+    </TouchableOpacity>
+  ), [itemSize, onImagePress, gap]);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { backgroundColor: colors.background }]}>
+      <View style={[styles.header, { backgroundColor: colors.surface }]}>
         <Text style={[styles.title, { color: colors.text }]}>Search</Text>
+        <View style={[styles.searchBar, { backgroundColor: colors.background, borderColor: colors.border }]}>
+          <Ionicons name="search" size={18} color={colors.textSecondary} />
+          <TextInput
+            style={[styles.searchInput, { color: colors.text }]}
+            placeholder="Search photos, categories, tags..."
+            placeholderTextColor={colors.textSecondary}
+            value={query}
+            onChangeText={handleSearch}
+            autoCorrect={false}
+          />
+          {query.length > 0 && (
+            <TouchableOpacity onPress={() => setQuery('')}>
+              <Ionicons name="close-circle" size={18} color={colors.textSecondary} />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
-      <SearchBar
-        value={query}
-        onChangeText={handleSearch}
-        onSubmit={handleSubmitSearch}
-        onClear={clearSearch}
-        placeholder="Search by name, tag, or category..."
-        autoFocus={false}
-      />
-
-      <FilterChips
-        chips={MEDIA_TYPE_FILTERS}
-        selectedId={selectedMediaType}
-        onSelect={handleMediaTypeFilter}
-      />
-
-      {showResults ? (
-        <View style={styles.resultsContainer}>
-          <Text style={[styles.resultsCount, { color: colors.textSecondary }]}>
-            {results.length} result{results.length !== 1 ? 's' : ''} for "{query}"
-          </Text>
-          <MediaGrid data={results} onItemPress={handleItemPress} />
-        </View>
-      ) : (
-        <ScrollView style={styles.suggestionsContainer} showsVerticalScrollIndicator={false}>
-          {/* Recent Searches */}
-          {recentSearches.length > 0 && (
-            <View style={styles.section}>
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                Recent Searches
-              </Text>
-              {recentSearches.map((search, index) => (
-                <Pressable
-                  key={index}
-                  onPress={() => handleSearch(search)}
-                  style={styles.recentItem}
-                >
-                  <Ionicons
-                    name="time-outline"
-                    size={18}
-                    color={colors.textSecondary}
-                  />
-                  <Text
-                    style={[styles.recentText, { color: colors.text }]}
-                  >
-                    {search}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          )}
-
-          {/* AI Suggested Tags */}
-          {suggestedTags.length > 0 && (
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Ionicons name="sparkles" size={16} color="#FFD700" />
-                <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                  AI Suggested Tags
-                </Text>
-              </View>
-              <View style={styles.tagsGrid}>
-                {suggestedTags.map((tag, index) => (
-                  <Pressable
-                    key={index}
-                    onPress={() => handleTagPress(tag)}
-                    style={[
-                      styles.tagChip,
-                      { backgroundColor: colors.surfaceVariant, borderColor: colors.border },
-                    ]}
-                  >
-                    <Text style={[styles.tagText, { color: colors.text }]}>
-                      {tag}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-          )}
-
-          {/* Browse Categories */}
-          <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>
-              Browse by Category
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filtersRow} contentContainerStyle={styles.filtersContent}>
+        {QUICK_FILTERS.map((filter) => (
+          <TouchableOpacity
+            key={filter.type}
+            style={[
+              styles.filterChip,
+              { backgroundColor: activeFilter === filter.type ? colors.primary : colors.surface, borderColor: colors.border },
+            ]}
+            onPress={() => setActiveFilter(activeFilter === filter.type ? null : filter.type)}
+          >
+            <Ionicons name={filter.icon as any} size={16} color={activeFilter === filter.type ? '#FFF' : colors.textSecondary} />
+            <Text style={[styles.filterText, { color: activeFilter === filter.type ? '#FFF' : colors.text }]}>
+              {filter.label}
             </Text>
-            <View style={styles.categoriesGrid}>
-              {[
-                { icon: 'people', label: 'People', query: 'person' },
-                { icon: 'leaf', label: 'Nature', query: 'nature' },
-                { icon: 'restaurant', label: 'Food', query: 'food' },
-                { icon: 'car', label: 'Vehicles', query: 'car' },
-                { icon: 'paw', label: 'Animals', query: 'animal' },
-                { icon: 'business', label: 'Buildings', query: 'building' },
-                { icon: 'phone-portrait', label: 'Screenshots', query: 'screenshot' },
-                { icon: 'document-text', label: 'Documents', query: 'document' },
-              ].map((cat, index) => (
-                <Pressable
-                  key={index}
-                  onPress={() => handleSearch(cat.query)}
-                  style={[
-                    styles.categoryCard,
-                    { backgroundColor: colors.surfaceVariant },
-                  ]}
-                >
-                  <Ionicons
-                    name={cat.icon as keyof typeof Ionicons.glyphMap}
-                    size={24}
-                    color={colors.primary}
-                  />
-                  <Text
-                    style={[styles.categoryLabel, { color: colors.text }]}
-                  >
-                    {cat.label}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
 
-          <View style={styles.bottomPadding} />
-        </ScrollView>
+      {query.length === 0 && !activeFilter && !activeCategory && (
+        <View style={styles.categoriesSection}>
+          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>CATEGORIES</Text>
+          <View style={styles.categoriesGrid}>
+            {categories.slice(0, 8).map((cat) => (
+              <TouchableOpacity
+                key={cat.name}
+                style={[styles.categoryCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                onPress={() => setActiveCategory(activeCategory === cat.name ? null : cat.name)}
+              >
+                <Ionicons
+                  name={(CATEGORY_ICONS[cat.name] || 'grid') as any}
+                  size={24}
+                  color={CATEGORY_COLORS[cat.name] || colors.primary}
+                />
+                <Text style={[styles.categoryName, { color: colors.text }]}>{cat.name}</Text>
+                <Text style={[styles.categoryCount, { color: colors.textSecondary }]}>{cat.count}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
       )}
 
-      <Modal
-        visible={viewerVisible}
-        animationType="fade"
-        presentationStyle="fullScreen"
-        statusBarTranslucent
-      >
-        <FullscreenViewer
-          items={results}
-          initialIndex={viewerIndex}
-          onClose={() => setViewerVisible(false)}
-        />
-      </Modal>
+      {(query.length > 0 || activeFilter || activeCategory) && (
+        <>
+          <Text style={[styles.resultsCount, { color: colors.textSecondary }]}>
+            {filteredResults.length} results
+          </Text>
+          <FlatList
+            data={filteredResults}
+            renderItem={renderItem}
+            keyExtractor={(item) => item.id}
+            numColumns={gridColumns}
+            contentContainerStyle={styles.gridContent}
+            showsVerticalScrollIndicator={false}
+            initialNumToRender={20}
+          />
+        </>
+      )}
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  header: {
-    paddingTop: Platform.OS === 'ios' ? 54 : 40,
-    paddingHorizontal: 16,
-    paddingBottom: 4,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: '800',
-  },
-  resultsContainer: {
-    flex: 1,
-  },
-  resultsCount: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    fontSize: 13,
-  },
-  suggestionsContainer: {
-    flex: 1,
-  },
-  section: {
-    marginTop: 24,
-    paddingHorizontal: 16,
-  },
-  sectionHeader: {
+  container: { flex: 1 },
+  header: { padding: 16, paddingTop: 60 },
+  title: { fontSize: 28, fontWeight: '800', marginBottom: 12 },
+  searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginBottom: 12,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 12,
-  },
-  recentItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    gap: 12,
-  },
-  recentText: {
-    fontSize: 15,
-  },
-  tagsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    padding: 10,
+    borderRadius: 14,
+    borderWidth: 1,
     gap: 8,
   },
-  tagChip: {
+  searchInput: { flex: 1, fontSize: 15 },
+  filtersRow: { maxHeight: 48, marginTop: 8 },
+  filtersContent: { paddingHorizontal: 16, gap: 8 },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1,
+    gap: 6,
   },
-  tagText: {
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  categoriesGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
+  filterText: { fontSize: 13, fontWeight: '500' },
+  categoriesSection: { padding: 16 },
+  sectionLabel: { fontSize: 12, fontWeight: '700', letterSpacing: 1, marginBottom: 12 },
+  categoriesGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   categoryCard: {
-    width: '47%',
-    paddingVertical: 20,
-    paddingHorizontal: 16,
-    borderRadius: 12,
+    width: (SCREEN_WIDTH - 62) / 4,
     alignItems: 'center',
-    gap: 8,
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 6,
   },
-  categoryLabel: {
-    fontSize: 13,
-    fontWeight: '600',
+  categoryName: { fontSize: 11, fontWeight: '600', textAlign: 'center' },
+  categoryCount: { fontSize: 11 },
+  resultsCount: { paddingHorizontal: 16, paddingVertical: 8, fontSize: 13 },
+  gridContent: { padding: 1, paddingBottom: 100 },
+  gridImage: { width: '100%', height: '100%', borderRadius: 2 },
+  badge: {
+    position: 'absolute',
+    bottom: 4,
+    left: 4,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
   },
-  bottomPadding: {
-    height: 100,
-  },
+  badgeText: { color: '#FFF', fontSize: 9, fontWeight: '600' },
 });
-
-export default SearchScreen;
