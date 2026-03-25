@@ -40,12 +40,6 @@
           "savePhotosPermission": "AI Gallery needs permission to save edited photos.",
           "isAccessMediaLocationEnabled": true
         }
-      ],
-      [
-        "expo-image-manipulator",
-        {
-          "actions": ["resize", "rotate", "flip", "crop"]
-        }
       ]
     ],
     "experiments": {
