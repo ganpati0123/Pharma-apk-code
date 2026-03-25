@@ -1,414 +1,255 @@
-import React, { useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import {
-  StyleSheet,
   View,
   Text,
-  ScrollView,
-  Pressable,
-  Platform,
-  Modal,
-  Alert,
+  StyleSheet,
+  FlatList,
+  Image,
+  TouchableOpacity,
+  Dimensions,
   TextInput,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSettingsStore } from '../store/settingsStore';
 import { useAlbumStore } from '../store/albumStore';
-import { usePermissions } from '../hooks/usePermissions';
-import AlbumCard from '../components/AlbumCard';
-import MediaGrid from '../components/MediaGrid';
-import FullscreenViewer from '../components/FullscreenViewer';
-import PermissionRequest from '../components/PermissionRequest';
+import { useMediaStore } from '../store/mediaStore';
 import type { Album, MediaItem } from '../types';
 
-const AlbumsScreen: React.FC = () => {
-  const colors = useSettingsStore((s) => s.colors);
-  const { hasPermission, requestPermission } = usePermissions();
-  const {
-    albums,
-    autoAlbums,
-    aiAlbums,
-    dateGroups,
-    createCustomAlbum,
-    getAlbumAssets,
-  } = useAlbumStore();
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const ALBUM_GAP = 12;
+const ALBUM_SIZE = (SCREEN_WIDTH - 48 - ALBUM_GAP) / 2;
 
-  const [selectedAlbum, setSelectedAlbum] = useState<Album | null>(null);
-  const [albumAssets, setAlbumAssets] = useState<MediaItem[]>([]);
-  const [viewerVisible, setViewerVisible] = useState(false);
-  const [viewerIndex, setViewerIndex] = useState(0);
-  const [showCreateDialog, setShowCreateDialog] = useState(false);
+export const AlbumsScreen: React.FC<{
+  onAlbumPress?: (album: Album) => void;
+  onImagePress?: (item: MediaItem, index: number) => void;
+}> = ({ onAlbumPress, onImagePress }) => {
+  const { colors } = useSettingsStore();
+  const { albums, createAlbum } = useAlbumStore();
+  const { assets } = useMediaStore();
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const [newAlbumName, setNewAlbumName] = useState('');
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [selectedAlbum, setSelectedAlbum] = useState<Album | null>(null);
 
-  const handleAlbumPress = useCallback(
-    async (album: Album) => {
-      if (album.assets) {
-        setAlbumAssets(album.assets);
-        setSelectedAlbum(album);
-      } else {
-        const assets = await getAlbumAssets(album.id);
-        setAlbumAssets(assets);
-        setSelectedAlbum(album);
-      }
-    },
-    [getAlbumAssets]
-  );
+  const albumsWithCovers = useMemo(() => {
+    return albums.map((album) => {
+      const albumAssets = assets.filter((a) => album.assetIds.includes(a.id));
+      return {
+        ...album,
+        coverUri: albumAssets.length > 0 ? albumAssets[0].uri : undefined,
+        itemCount: albumAssets.length,
+        assets: albumAssets,
+      };
+    });
+  }, [albums, assets]);
 
-  const handleBackToAlbums = useCallback(() => {
-    setSelectedAlbum(null);
-    setAlbumAssets([]);
-  }, []);
+  const smartAlbums = useMemo(() => {
+    const videos = assets.filter((a) => a.mediaType === 'video');
+    const recent = assets.filter((a) => Date.now() - a.creationTime < 7 * 24 * 60 * 60 * 1000);
+    const screenshots = assets.filter((a) => a.aiCategory === 'SCREENSHOTS');
 
-  const handleItemPress = useCallback((_item: MediaItem, index: number) => {
-    setViewerIndex(index);
-    setViewerVisible(true);
-  }, []);
+    return [
+      { id: 'smart-recent', name: 'Recent', icon: 'time', color: '#6C63FF', count: recent.length, assets: recent },
+      { id: 'smart-videos', name: 'Videos', icon: 'videocam', color: '#FF6B9D', count: videos.length, assets: videos },
+      { id: 'smart-screenshots', name: 'Screenshots', icon: 'phone-portrait', color: '#4CAF50', count: screenshots.length, assets: screenshots },
+    ];
+  }, [assets]);
 
   const handleCreateAlbum = useCallback(() => {
     if (newAlbumName.trim()) {
-      createCustomAlbum(newAlbumName.trim(), []);
+      createAlbum(newAlbumName.trim());
       setNewAlbumName('');
-      setShowCreateDialog(false);
+      setShowCreateModal(false);
     }
-  }, [newAlbumName, createCustomAlbum]);
+  }, [newAlbumName, createAlbum]);
 
-  if (hasPermission === null) {
-    return <View style={[styles.container, { backgroundColor: colors.background }]} />;
-  }
-
-  if (hasPermission === false) {
-    return <PermissionRequest onRequest={requestPermission} />;
-  }
-
-  // Album detail view
-  if (selectedAlbum) {
-    return (
-      <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <View style={[styles.header, { backgroundColor: colors.background }]}>
-          <Pressable onPress={handleBackToAlbums} style={styles.backButton} hitSlop={8}>
-            <Ionicons name="arrow-back" size={24} color={colors.icon} />
-          </Pressable>
-          <View style={styles.headerTitleContainer}>
-            <Text style={[styles.title, { color: colors.text }]}>
-              {selectedAlbum.title}
-            </Text>
-            <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-              {selectedAlbum.count} items
-            </Text>
-          </View>
+  const renderAlbumItem = useCallback(({ item }: { item: any }) => (
+    <TouchableOpacity
+      style={[styles.albumCard, { backgroundColor: colors.surface }]}
+      onPress={() => onAlbumPress?.(item)}
+      activeOpacity={0.8}
+    >
+      {item.coverUri ? (
+        <Image source={{ uri: item.coverUri }} style={styles.albumCover} />
+      ) : (
+        <View style={[styles.albumPlaceholder, { backgroundColor: colors.border }]}>
+          <Ionicons name="images" size={32} color={colors.textSecondary} />
         </View>
-        <MediaGrid data={albumAssets} onItemPress={handleItemPress} />
-
-        <Modal
-          visible={viewerVisible}
-          animationType="fade"
-          presentationStyle="fullScreen"
-          statusBarTranslucent
-        >
-          <FullscreenViewer
-            items={albumAssets}
-            initialIndex={viewerIndex}
-            onClose={() => setViewerVisible(false)}
-          />
-        </Modal>
+      )}
+      <View style={styles.albumInfo}>
+        <Text style={[styles.albumName, { color: colors.text }]} numberOfLines={1}>{item.name}</Text>
+        <Text style={[styles.albumCount, { color: colors.textSecondary }]}>{item.itemCount} items</Text>
       </View>
-    );
-  }
+    </TouchableOpacity>
+  ), [colors, onAlbumPress]);
 
-  // Albums list view
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { backgroundColor: colors.background }]}>
-        <Text style={[styles.title, { color: colors.text }]}>Albums</Text>
-        <Pressable
-          onPress={() => setShowCreateDialog(true)}
+      <View style={[styles.header, { backgroundColor: colors.surface }]}>
+        <View>
+          <Text style={[styles.title, { color: colors.text }]}>Albums</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
+            {albums.length} albums
+          </Text>
+        </View>
+        <TouchableOpacity
           style={[styles.createButton, { backgroundColor: colors.primary }]}
-          hitSlop={8}
+          onPress={() => setShowCreateModal(true)}
         >
-          <Ionicons name="add" size={20} color="#FFFFFF" />
-          <Text style={styles.createButtonText}>New Album</Text>
-        </Pressable>
+          <Ionicons name="add" size={20} color="#FFF" />
+          <Text style={styles.createText}>New</Text>
+        </TouchableOpacity>
       </View>
 
-      <ScrollView
-        style={styles.scrollView}
+      <FlatList
+        ListHeaderComponent={
+          <>
+            {/* Smart Albums */}
+            <View style={styles.smartSection}>
+              <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>SMART ALBUMS</Text>
+              <View style={styles.smartGrid}>
+                {smartAlbums.map((album) => (
+                  <TouchableOpacity
+                    key={album.id}
+                    style={[styles.smartCard, { backgroundColor: album.color + '15', borderColor: album.color + '30' }]}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name={album.icon as any} size={24} color={album.color} />
+                    <Text style={[styles.smartName, { color: colors.text }]}>{album.name}</Text>
+                    <Text style={[styles.smartCount, { color: colors.textSecondary }]}>{album.count}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            <Text style={[styles.sectionLabel, { color: colors.textSecondary, paddingHorizontal: 16 }]}>MY ALBUMS</Text>
+          </>
+        }
+        data={albumsWithCovers}
+        renderItem={renderAlbumItem}
+        keyExtractor={(item) => item.id}
+        numColumns={2}
+        columnWrapperStyle={styles.albumRow}
+        contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
-      >
-        {/* AI Albums */}
-        {aiAlbums.length > 0 && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Ionicons name="sparkles" size={18} color="#FFD700" />
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                AI Categories
-              </Text>
-            </View>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.horizontalList}
-            >
-              {aiAlbums.map((album) => (
-                <AlbumCard
-                  key={album.id}
-                  album={album}
-                  onPress={handleAlbumPress}
-                  size="medium"
-                />
-              ))}
-            </ScrollView>
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <Ionicons name="folder-open" size={48} color={colors.textSecondary} />
+            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No albums yet</Text>
+            <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>Tap + to create your first album</Text>
           </View>
-        )}
+        }
+      />
 
-        {/* Auto Albums */}
-        {autoAlbums.length > 0 && (
-          <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>
-              Smart Albums
-            </Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.horizontalList}
-            >
-              {autoAlbums.map((album) => (
-                <AlbumCard
-                  key={album.id}
-                  album={album}
-                  onPress={handleAlbumPress}
-                  size="medium"
-                />
-              ))}
-            </ScrollView>
-          </View>
-        )}
-
-        {/* Date Groups */}
-        {dateGroups.length > 0 && (
-          <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>
-              By Date
-            </Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.horizontalList}
-            >
-              {dateGroups.map((album) => (
-                <AlbumCard
-                  key={album.id}
-                  album={album}
-                  onPress={handleAlbumPress}
-                  size="medium"
-                />
-              ))}
-            </ScrollView>
-          </View>
-        )}
-
-        {/* Custom Albums */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>
-            My Albums
-          </Text>
-          {albums.length > 0 ? (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.horizontalList}
-            >
-              {albums.map((album) => (
-                <AlbumCard
-                  key={album.id}
-                  album={album}
-                  onPress={handleAlbumPress}
-                  size="medium"
-                />
-              ))}
-            </ScrollView>
-          ) : (
-            <View style={styles.emptyAlbums}>
-              <Text
-                style={[styles.emptyText, { color: colors.textSecondary }]}
-              >
-                No custom albums yet. Tap "New Album" to create one.
-              </Text>
-            </View>
-          )}
-        </View>
-
-        <View style={styles.bottomPadding} />
-      </ScrollView>
-
-      {/* Create Album Dialog */}
-      <Modal visible={showCreateDialog} transparent animationType="fade">
-        <View style={styles.dialogOverlay}>
-          <View
-            style={[
-              styles.dialog,
-              { backgroundColor: colors.card, borderColor: colors.border },
-            ]}
-          >
-            <Text style={[styles.dialogTitle, { color: colors.text }]}>
-              New Album
-            </Text>
+      {showCreateModal && (
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modal, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>New Album</Text>
             <TextInput
-              style={[
-                styles.dialogInput,
-                {
-                  color: colors.text,
-                  borderColor: colors.border,
-                  backgroundColor: colors.surfaceVariant,
-                },
-              ]}
+              style={[styles.modalInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.background }]}
               placeholder="Album name"
               placeholderTextColor={colors.textSecondary}
               value={newAlbumName}
               onChangeText={setNewAlbumName}
               autoFocus
             />
-            <View style={styles.dialogActions}>
-              <Pressable
-                onPress={() => {
-                  setShowCreateDialog(false);
-                  setNewAlbumName('');
-                }}
-                style={styles.dialogButton}
-              >
-                <Text
-                  style={[styles.dialogButtonText, { color: colors.textSecondary }]}
-                >
-                  Cancel
-                </Text>
-              </Pressable>
-              <Pressable
+            <View style={styles.modalActions}>
+              <TouchableOpacity onPress={() => setShowCreateModal(false)} style={styles.modalCancel}>
+                <Text style={[styles.modalCancelText, { color: colors.textSecondary }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
                 onPress={handleCreateAlbum}
-                style={[styles.dialogButton, { backgroundColor: colors.primary, borderRadius: 8 }]}
+                style={[styles.modalCreate, { backgroundColor: colors.primary }]}
               >
-                <Text style={[styles.dialogButtonText, { color: '#FFFFFF' }]}>
-                  Create
-                </Text>
-              </Pressable>
+                <Text style={styles.modalCreateText}>Create</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
-      </Modal>
+      )}
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
+  container: { flex: 1 },
   header: {
-    paddingTop: Platform.OS === 'ios' ? 54 : 40,
-    paddingHorizontal: 16,
-    paddingBottom: 8,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-end',
+    alignItems: 'center',
+    padding: 16,
+    paddingTop: 60,
   },
-  headerTitleContainer: {
-    flex: 1,
-    marginLeft: 8,
-  },
-  backButton: {
-    padding: 8,
-    marginBottom: 4,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: '800',
-  },
-  subtitle: {
-    fontSize: 14,
-    marginTop: 2,
-  },
+  title: { fontSize: 28, fontWeight: '800' },
+  subtitle: { fontSize: 14, marginTop: 2 },
   createButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 4,
     paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 20,
-    gap: 4,
-    marginBottom: 8,
+    borderRadius: 12,
   },
-  createButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  scrollView: {
-    flex: 1,
-  },
-  section: {
-    marginTop: 20,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 16,
-    marginBottom: 8,
-  },
-  sectionTitle: {
-    fontSize: 20,
+  createText: { color: '#FFF', fontSize: 14, fontWeight: '600' },
+  smartSection: { padding: 16 },
+  sectionLabel: {
+    fontSize: 12,
     fontWeight: '700',
-    paddingHorizontal: 16,
-    marginBottom: 8,
+    letterSpacing: 1,
+    marginBottom: 10,
   },
-  horizontalList: {
-    paddingHorizontal: 10,
-  },
-  emptyAlbums: {
-    paddingHorizontal: 16,
-    paddingVertical: 40,
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  bottomPadding: {
-    height: 100,
-  },
-  dialogOverlay: {
+  smartGrid: { flexDirection: 'row', gap: 10 },
+  smartCard: {
     flex: 1,
+    alignItems: 'center',
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 6,
+  },
+  smartName: { fontSize: 13, fontWeight: '600' },
+  smartCount: { fontSize: 12 },
+  albumRow: { paddingHorizontal: 16, gap: ALBUM_GAP },
+  listContent: { paddingBottom: 100 },
+  albumCard: {
+    width: ALBUM_SIZE,
+    borderRadius: 14,
+    overflow: 'hidden',
+    marginBottom: ALBUM_GAP,
+  },
+  albumCover: { width: '100%', height: ALBUM_SIZE, borderRadius: 14 },
+  albumPlaceholder: {
+    width: '100%',
+    height: ALBUM_SIZE,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  albumInfo: { padding: 10 },
+  albumName: { fontSize: 15, fontWeight: '600' },
+  albumCount: { fontSize: 12, marginTop: 2 },
+  emptyState: { alignItems: 'center', padding: 40, gap: 8 },
+  emptyText: { fontSize: 16, fontWeight: '600' },
+  emptySubtext: { fontSize: 14 },
+  modalOverlay: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  dialog: {
-    width: '80%',
-    borderRadius: 16,
-    padding: 24,
+  modal: { width: '80%', borderRadius: 20, padding: 24 },
+  modalTitle: { fontSize: 20, fontWeight: '700', marginBottom: 16 },
+  modalInput: {
     borderWidth: 1,
-  },
-  dialogTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    marginBottom: 16,
-  },
-  dialogInput: {
-    borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 12,
     padding: 12,
     fontSize: 16,
     marginBottom: 20,
   },
-  dialogActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 12,
-  },
-  dialogButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-  },
-  dialogButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-  },
+  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
+  modalCancel: { padding: 10 },
+  modalCancelText: { fontSize: 15, fontWeight: '500' },
+  modalCreate: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10 },
+  modalCreateText: { color: '#FFF', fontSize: 15, fontWeight: '600' },
 });
-
-export default AlbumsScreen;
