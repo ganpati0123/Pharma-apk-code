@@ -1,0 +1,55 @@
+{
+  "expo": {
+    "name": "AI Gallery",
+    "slug": "ai-gallery-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "scheme": "ai-gallery",
+    "splash": {
+      "backgroundColor": "#000000"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.aigallery.app",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "AI Gallery needs access to your photos to display and organize them.",
+        "NSPhotoLibraryAddUsageDescription": "AI Gallery needs permission to save edited photos."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#000000"
+      },
+      "package": "com.aigallery.app",
+      "permissions": [
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "AI Gallery needs access to your photos to display and organize them.",
+          "savePhotosPermission": "AI Gallery needs permission to save edited photos.",
+          "isAccessMediaLocationEnabled": true
+        }
+      ],
+      [
+        "expo-image-manipulator",
+        {
+          "actions": ["resize", "rotate", "flip", "crop"]
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
