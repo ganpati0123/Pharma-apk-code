@@ -10,7 +10,9 @@
     "splash": {
       "backgroundColor": "#000000"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.aigallery.app",
@@ -40,7 +42,8 @@
           "savePhotosPermission": "AI Gallery needs permission to save edited photos.",
           "isAccessMediaLocationEnabled": true
         }
-      ]
+      ],
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true
